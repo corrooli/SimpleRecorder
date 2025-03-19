@@ -8,6 +8,15 @@ import os
 import re
 import logging
 import json
+from enum import Enum
+
+# Configure root-level logging: you can adjust filename, level, format, etc.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s")
+
+class LogSeverity(Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
 
 def get_avfoundation_audio_devices():
     """
@@ -21,7 +30,7 @@ def get_avfoundation_audio_devices():
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         lines = proc.stderr.splitlines()
     except Exception as e:
-        logging.error("ffmpeg not found! %d", e)
+        logging.error(f"ffmpeg not found! {e}")
         return []
 
     audio_dev_section = False
@@ -56,9 +65,9 @@ class SimpleRecorder(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Simple Stereo Recorder")
-        style = ttk.Style(self)
 
         # Use the default theme
+        style = ttk.Style(self)
         style.theme_use("default")
 
         # Configure label style
@@ -87,23 +96,19 @@ class SimpleRecorder(tk.Tk):
 
         # Attempt to maximize the window (windowed fullscreen)
         self.update_idletasks()
+        self.state('zoomed')  # may have no effect on some OSes
 
-        # Maximized window
-        self.state('zoomed')
-
-        # ========== Gather audio devices ==========
+        # Gather audio devices
         self.audio_devices = get_avfoundation_audio_devices()
         if not self.audio_devices:
             self.audio_devices = [("0", "Default Device (not found by FFmpeg)")]
 
-        # State
         self.record_process = None
 
         # ========== Main Frame ==========
         main_frame = ttk.Frame(self)
         main_frame.grid(row=0, column=0, sticky="nsew")
 
-        # Make sure the frame expands fully
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
@@ -111,7 +116,7 @@ class SimpleRecorder(tk.Tk):
         # Audio Device selection
         ttk.Label(main_frame, text="Audio Device:").grid(
             row=0, column=0, padx=5, pady=5, sticky="e")
-        self.device_var = tk.StringVar(value=self.audio_devices[0][0])  # We'll set it properly later
+        self.device_var = tk.StringVar(value=self.audio_devices[0][0])
         device_names = [f"{idx}: {name}" for (idx, name) in self.audio_devices]
         self.device_combo = ttk.Combobox(main_frame, values=device_names, state="readonly", width=40)
         self.device_combo.current(0)
@@ -122,7 +127,9 @@ class SimpleRecorder(tk.Tk):
         ttk.Label(main_frame, text="Total Channels:").grid(
             row=1, column=0, padx=5, pady=5, sticky="e")
         self.total_channels_var = tk.StringVar()
-        self.total_channels_entry = ttk.Entry(main_frame, textvariable=self.total_channels_var, width=10)
+        self.total_channels_entry = ttk.Entry(main_frame,
+                                              textvariable=self.total_channels_var,
+                                              width=10)
         self.total_channels_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w")
 
         # Audio Stream Index (0 or 1)
@@ -131,8 +138,10 @@ class SimpleRecorder(tk.Tk):
         self.stream_index_var = tk.IntVar(value=0)
         stream_frame = ttk.Frame(main_frame)
         stream_frame.grid(row=2, column=1, padx=5, pady=5, sticky="w")
-        ttk.Radiobutton(stream_frame, text="0", variable=self.stream_index_var, value=0).pack(side="left")
-        ttk.Radiobutton(stream_frame, text="1", variable=self.stream_index_var, value=1).pack(side="left")
+        ttk.Radiobutton(stream_frame, text="0",
+                        variable=self.stream_index_var, value=0).pack(side="left")
+        ttk.Radiobutton(stream_frame, text="1",
+                        variable=self.stream_index_var, value=1).pack(side="left")
 
         # Band Name
         ttk.Label(main_frame, text="Band Name:").grid(
@@ -154,23 +163,36 @@ class SimpleRecorder(tk.Tk):
         self.record_mode_var = tk.StringVar(value="stereo")
         mode_frame = ttk.LabelFrame(main_frame, text="Input Mode")
         mode_frame.grid(row=5, column=0, columnspan=3, padx=5, pady=5, sticky="ew")
-        ttk.Radiobutton(mode_frame, text="Mono", variable=self.record_mode_var,
-                        value="mono", command=self.on_mode_change).grid(row=0, column=0, padx=5, pady=5)
-        ttk.Radiobutton(mode_frame, text="Stereo", variable=self.record_mode_var,
-                        value="stereo", command=self.on_mode_change).grid(row=0, column=1, padx=5, pady=5)
-        ttk.Radiobutton(mode_frame, text="Multichannel", variable=self.record_mode_var,
-                        value="multichannel", command=self.on_mode_change).grid(row=0, column=2, padx=5, pady=5)
+        ttk.Radiobutton(mode_frame, text="Mono",
+                        variable=self.record_mode_var,
+                        value="mono",
+                        command=self.on_mode_change).grid(row=0, column=0, padx=5, pady=5)
+        ttk.Radiobutton(mode_frame, text="Stereo",
+                        variable=self.record_mode_var,
+                        value="stereo",
+                        command=self.on_mode_change).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Radiobutton(mode_frame, text="Multichannel",
+                        variable=self.record_mode_var,
+                        value="multichannel",
+                        command=self.on_mode_change).grid(row=0, column=2, padx=5, pady=5)
 
         # For mono and stereo, let user choose channels:
         ttk.Label(mode_frame, text="Mono Channel:").grid(row=1, column=0, sticky="e")
         self.mono_channel_var = tk.IntVar(value=1)
-        self.mono_channel_dropdown = ttk.Combobox(mode_frame, values=[], textvariable=self.mono_channel_var,
-                                                  state="readonly", width=5)
+        self.mono_channel_dropdown = ttk.Combobox(mode_frame,
+                                                  values=[],
+                                                  textvariable=self.mono_channel_var,
+                                                  state="readonly",
+                                                  width=5)
         self.mono_channel_dropdown.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+
         ttk.Label(mode_frame, text="Stereo Pair:").grid(row=2, column=0, sticky="e")
         self.stereo_pair_var = tk.StringVar(value="1-2")
-        self.stereo_pair_dropdown = ttk.Combobox(mode_frame, values=[], textvariable=self.stereo_pair_var,
-                                                 state="readonly", width=5)
+        self.stereo_pair_dropdown = ttk.Combobox(mode_frame,
+                                                 values=[],
+                                                 textvariable=self.stereo_pair_var,
+                                                 state="readonly",
+                                                 width=5)
         self.stereo_pair_dropdown.grid(row=2, column=1, padx=5, pady=5, sticky="w")
 
         # Buttons
@@ -182,27 +204,38 @@ class SimpleRecorder(tk.Tk):
         self.stop_button.grid(row=0, column=1, padx=15, pady=5)
 
         # Status Label
-        self.status_label = ttk.Label(main_frame, text="Not recording.",
+        self.status_label = ttk.Label(main_frame,
+                                      text="Not recording.",
                                       font=("Helvetica", 13, "italic"))
         self.status_label.grid(row=7, column=0, columnspan=3, padx=5, pady=10)
 
-        # -- First do a baseline update of our channel lists:
+        # Initialize channel lists:
         self.update_channel_lists()
         self.on_mode_change()
 
-        # -- Attempt to load default settings from file (this will override the above defaults):
+        # Attempt to load default settings
         self.load_default_settings()
 
-        # -- Now finalize channel lists & mode based on loaded settings, if any:
+        # Finalize channel lists & mode
         self.update_channel_lists()
         self.on_mode_change()
 
+    def log_message(self, message: str, severity: LogSeverity = LogSeverity.INFO) -> None:
+        """
+        Helper to unify logging to console + updating the status label.
+        """
+        # Update status label in the GUI
+        self.status_label.config(text=message)
+
+        # Also log via Python's logging
+        if severity == LogSeverity.INFO:
+            logging.info(message)
+        elif severity == LogSeverity.WARNING:
+            logging.warning(message)
+        elif severity == LogSeverity.ERROR:
+            logging.error(message)
+
     def load_default_settings(self):
-        """
-        Reads default settings from `defaultsettings.json` (if it exists)
-        and updates widget variables accordingly. Does NOT overwrite the file
-        at any point; just reads from it if found.
-        """
         config_path = "defaultsettings.json"
         if not os.path.isfile(config_path):
             return  # No config file, do nothing
@@ -211,7 +244,7 @@ class SimpleRecorder(tk.Tk):
             with open(config_path, "r", encoding="UTF8") as f:
                 data = json.load(f)
         except Exception as e:
-            logging.error(f"Could not load default settings: {e}")
+            self.log_message(f"Could not load default settings: {e}", LogSeverity.ERROR)
             return
 
         if "device_index" in data:
@@ -239,22 +272,15 @@ class SimpleRecorder(tk.Tk):
         if "stereo_pair" in data:
             self.stereo_pair_var.set(data["stereo_pair"])
 
-
     def choose_folder(self):
         folder = filedialog.askdirectory()
         if folder:
             self.dest_path_var.set(folder)
 
     def on_device_changed(self, event=None):
-        """Called when user picks a different device."""
         self.update_channel_lists()
 
     def update_channel_lists(self):
-        """
-        Uses the selected device name to infer channel count and updates the
-        mono and stereo channel selection dropdowns.
-        Also sets the Total Channels field if not manually set.
-        """
         chosen_device_text = self.device_combo.get()  # e.g., "1: Audient EVO16"
         if ":" in chosen_device_text:
             name_part = chosen_device_text.split(":", 1)[-1].strip()
@@ -265,16 +291,14 @@ class SimpleRecorder(tk.Tk):
         if not self.total_channels_var.get().strip():
             self.total_channels_var.set(str(inferred))
 
-        total_str = self.total_channels_var.get()
         try:
-            total = int(total_str)
+            total = int(self.total_channels_var.get())
         except ValueError:
             total = inferred
 
         # Mono: channels 1..total
         mono_values = list(range(1, total + 1))
         self.mono_channel_dropdown["values"] = mono_values
-        # If current selection invalid, pick the first
         if self.mono_channel_var.get() not in mono_values:
             self.mono_channel_var.set(mono_values[0] if mono_values else 1)
 
@@ -290,7 +314,6 @@ class SimpleRecorder(tk.Tk):
             self.stereo_pair_var.set(stereo_vals[0])
 
     def on_mode_change(self):
-        """Enable/disable controls based on recording mode."""
         mode = self.record_mode_var.get()
         if mode == "mono":
             self.mono_channel_dropdown.config(state="readonly")
@@ -304,7 +327,7 @@ class SimpleRecorder(tk.Tk):
 
     def start_recording(self):
         if self.record_process and self.record_process.poll() is None:
-            self.status_label.config(text="Already recording.")
+            self.log_message("Already recording.", LogSeverity.WARNING)
             return
 
         band_name = self.band_name_var.get().strip()
@@ -320,24 +343,25 @@ class SimpleRecorder(tk.Tk):
         try:
             device_index = chosen_device_text.split(":", 1)[0].strip()
         except Exception as e:
-            logging.error("Error getting device index: %d", e)
+            self.log_message(f"Error getting device index: {e}", LogSeverity.ERROR)
             device_index = "0"
 
         audio_stream_idx = self.stream_index_var.get()
         mode = self.record_mode_var.get()
+
         try:
             total_channels = int(self.total_channels_var.get())
-        except Exception as e:
-            logging.error("Error getting total channels: %d", e)
+        except ValueError as e:
+            self.log_message(f"Error getting total channels: {e}", LogSeverity.ERROR)
             total_channels = 2
 
         cmd = [
             "ffmpeg",
+            "-thread_queue_size", "512",  # or 1024
             "-y",
             "-f", "avfoundation",
             "-i", f":{device_index}",
             "-ac", str(total_channels),
-            "-ar", "48000"
         ]
         cmd.extend(["-map", f"0:{audio_stream_idx}?"])
 
@@ -345,8 +369,11 @@ class SimpleRecorder(tk.Tk):
             ch = self.mono_channel_var.get() - 1
             pan_str = f"pan=mono|c0=c{ch}"
             cmd.extend(["-af", pan_str, "-ac", "1", output_path])
-            status_msg = (f"Recording MONO (channel {ch+1}) on device :{device_index} "
-                          f"stream {audio_stream_idx} -> {output_path}")
+            self.log_message(
+                f"Recording MONO (channel {ch+1}) on device :{device_index} "
+                f"stream {audio_stream_idx} -> {output_path}",
+                LogSeverity.INFO
+            )
         elif mode == "stereo":
             pair = self.stereo_pair_var.get()
             try:
@@ -355,17 +382,22 @@ class SimpleRecorder(tk.Tk):
                 right = int(right_str) - 1
                 pan_str = f"pan=stereo|c0=c{left}|c1=c{right}"
                 cmd.extend(["-af", pan_str, "-ac", "2", output_path])
-                status_msg = (f"Recording STEREO (channels {left+1}-{right+1}) on device :{device_index} "
-                              f"stream {audio_stream_idx} -> {output_path}")
-            except:
+                self.log_message(
+                    f"Recording STEREO (channels {left+1}-{right+1}) on device :{device_index} "
+                    f"stream {audio_stream_idx} -> {output_path}",
+                    LogSeverity.INFO
+                )
+            except Exception as e:
+                self.log_message(f"Stereo fallback -> {output_path} (Error: {e})", LogSeverity.WARNING)
                 cmd.append(output_path)
-                status_msg = (f"Recording STEREO fallback -> {output_path}")
         else:
             cmd.append(output_path)
-            status_msg = (f"Recording MULTICHANNEL (all {total_channels} channels) on device :{device_index} "
-                          f"stream {audio_stream_idx} -> {output_path}")
+            self.log_message(
+                f"Recording MULTICHANNEL (all {total_channels} channels) on device :{device_index} "
+                f"stream {audio_stream_idx} -> {output_path}",
+                LogSeverity.INFO
+            )
 
-        self.status_label.config(text=status_msg)
         self.record_process = subprocess.Popen(cmd)
 
     def stop_recording(self):
@@ -373,10 +405,9 @@ class SimpleRecorder(tk.Tk):
             self.record_process.send_signal(signal.SIGINT)
             self.record_process.wait()
             self.record_process = None
-            self.status_label.config(text="Recording stopped.")
+            self.log_message("Recording stopped.", LogSeverity.INFO)
         else:
-            self.status_label.config(text="Not currently recording.")
-
+            self.log_message("Not currently recording.", LogSeverity.WARNING)
 
 if __name__ == "__main__":
     app = SimpleRecorder()
