@@ -6,6 +6,8 @@ import signal
 import datetime
 import os
 import re
+import logging
+import json
 
 def get_avfoundation_audio_devices():
     """
@@ -18,8 +20,9 @@ def get_avfoundation_audio_devices():
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         lines = proc.stderr.splitlines()
-    except Exception:
-        return []  # ffmpeg not available
+    except Exception as e:
+        logging.error("ffmpeg not found! %d", e)
+        return []
 
     audio_dev_section = False
     devices = []
@@ -71,7 +74,7 @@ class SimpleRecorder(tk.Tk):
 
         # Audio Device selection
         ttk.Label(main_frame, text="Audio Device:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
-        self.device_var = tk.StringVar(value=self.audio_devices[0][0])
+        self.device_var = tk.StringVar(value=self.audio_devices[0][0])  # We'll set it properly later
         device_names = [f"{idx}: {name}" for (idx, name) in self.audio_devices]
         self.device_combo = ttk.Combobox(main_frame, values=device_names, state="readonly", width=40)
         self.device_combo.current(0)
@@ -141,9 +144,60 @@ class SimpleRecorder(tk.Tk):
         self.columnconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
 
-        # Initialize channel lists and total channels field
+        # -- First do a baseline update of our channel lists:
         self.update_channel_lists()
         self.on_mode_change()
+
+        # -- Attempt to load default settings from file (this will override the above defaults):
+        self.load_default_settings()
+
+        # -- Now finalize channel lists & mode based on loaded settings, if any:
+        self.update_channel_lists()
+        self.on_mode_change()
+
+    def load_default_settings(self):
+        """
+        Reads default settings from `defaultsettings.json` (if it exists)
+        and updates widget variables accordingly. Does NOT overwrite the file
+        at any point; just reads from it if found.
+        """
+        config_path = "defaultsettings.json"
+        if not os.path.isfile(config_path):
+            return  # No config file, do nothing
+
+        try:
+            with open(config_path, "r") as f:
+                data = json.load(f)
+        except Exception as e:
+            logging.error(f"Could not load default settings: {e}")
+            return
+
+        # device_index (string like "1", "0", etc.)
+        if "device_index" in data:
+            loaded_idx = data["device_index"]
+            # Try to find a matching device in self.audio_devices
+            for i, (dev_idx, dev_name) in enumerate(self.audio_devices):
+                if dev_idx == loaded_idx:  # exact match on index
+                    self.device_combo.current(i)
+                    break
+
+        if "stream_index" in data:
+            self.stream_index_var.set(data["stream_index"])
+
+        if "band_name" in data:
+            self.band_name_var.set(data["band_name"])
+
+        if "destination_folder" in data:
+            self.dest_path_var.set(data["destination_folder"])
+
+        if "record_mode" in data and data["record_mode"] in ("mono", "stereo", "multichannel"):
+            self.record_mode_var.set(data["record_mode"])
+
+        if "mono_channel" in data:
+            self.mono_channel_var.set(data["mono_channel"])
+
+        if "stereo_pair" in data:
+            self.stereo_pair_var.set(data["stereo_pair"])
 
     def choose_folder(self):
         folder = filedialog.askdirectory()
@@ -156,20 +210,33 @@ class SimpleRecorder(tk.Tk):
 
     def update_channel_lists(self):
         """
-        Uses the selected device name to infer the channel count and updates the
+        Uses the selected device name to infer channel count and updates the
         mono and stereo channel selection dropdowns.
-        Also sets the Total Channels field.
+        Also sets the Total Channels field if not manually set.
         """
         chosen_device_text = self.device_combo.get()  # e.g., "1: Audient EVO16"
-        name_part = chosen_device_text.split(":", 1)[-1].strip()
+        if ":" in chosen_device_text:
+            name_part = chosen_device_text.split(":", 1)[-1].strip()
+        else:
+            name_part = chosen_device_text.strip()
+
         inferred = infer_channel_count(name_part)
-        self.total_channels_var.set(str(inferred))
-        total = inferred
+        # If user hasn't typed something in total_channels_var yet, or it’s empty, adopt inferred
+        if not self.total_channels_var.get().strip():
+            self.total_channels_var.set(str(inferred))
+
+        total_str = self.total_channels_var.get()
+        try:
+            total = int(total_str)
+        except ValueError:
+            total = inferred
 
         # Mono: channels 1 to total
         mono_values = list(range(1, total + 1))
         self.mono_channel_dropdown["values"] = mono_values
-        self.mono_channel_var.set(mono_values[0])
+        # Make sure current selection is valid
+        if self.mono_channel_var.get() not in mono_values:
+            self.mono_channel_var.set(mono_values[0] if mono_values else 1)
 
         # Stereo pairs: (1-2, 3-4, etc.)
         stereo_vals = []
@@ -179,7 +246,9 @@ class SimpleRecorder(tk.Tk):
         if not stereo_vals:
             stereo_vals = ["1-2"]
         self.stereo_pair_dropdown["values"] = stereo_vals
-        self.stereo_pair_var.set(stereo_vals[0])
+        # If currently stored stereo pair not in list, set it
+        if self.stereo_pair_var.get() not in stereo_vals:
+            self.stereo_pair_var.set(stereo_vals[0])
 
     def on_mode_change(self):
         """Enable/disable controls based on recording mode."""
@@ -213,14 +282,16 @@ class SimpleRecorder(tk.Tk):
         chosen_device_text = self.device_combo.get()
         try:
             device_index = chosen_device_text.split(":", 1)[0].strip()
-        except:
+        except Exception as e:
+            logging.error("Error getting device index: %d", e)
             device_index = "0"
 
         audio_stream_idx = self.stream_index_var.get()
         mode = self.record_mode_var.get()
         try:
             total_channels = int(self.total_channels_var.get())
-        except:
+        except Exception as e:
+            logging.error("Error getting total channels: %d", e)
             total_channels = 2
 
         # Build base command:
@@ -237,21 +308,29 @@ class SimpleRecorder(tk.Tk):
         cmd.extend(["-map", f"0:{audio_stream_idx}?"])
 
         if mode == "mono":
-            ch = self.mono_channel_var.get() - 1  # 0-based channel index for selection
+            ch = self.mono_channel_var.get() - 1  # 0-based index
             pan_str = f"pan=mono|c0=c{ch}"
             cmd.extend(["-af", pan_str, "-ac", "1", output_path])
-            status_msg = (f"Recording MONO (channel {ch+1}) on device :{device_index} stream {audio_stream_idx} -> {output_path}")
+            status_msg = (f"Recording MONO (channel {ch+1}) on device :{device_index} "
+                          f"stream {audio_stream_idx} -> {output_path}")
         elif mode == "stereo":
             pair = self.stereo_pair_var.get()  # e.g., "1-2"
-            left_str, right_str = pair.split("-")
-            left = int(left_str) - 1
-            right = int(right_str) - 1
-            pan_str = f"pan=stereo|c0=c{left}|c1=c{right}"
-            cmd.extend(["-af", pan_str, "-ac", "2", output_path])
-            status_msg = (f"Recording STEREO (channels {left+1}-{right+1}) on device :{device_index} stream {audio_stream_idx} -> {output_path}")
-        else:  # multichannel mode: record all channels without any pan filter
+            try:
+                left_str, right_str = pair.split("-")
+                left = int(left_str) - 1
+                right = int(right_str) - 1
+                pan_str = f"pan=stereo|c0=c{left}|c1=c{right}"
+                cmd.extend(["-af", pan_str, "-ac", "2", output_path])
+                status_msg = (f"Recording STEREO (channels {left+1}-{right+1}) on device :{device_index} "
+                              f"stream {audio_stream_idx} -> {output_path}")
+            except:
+                # fallback if there's an error parsing stereo pair
+                cmd.append(output_path)
+                status_msg = (f"Recording STEREO fallback -> {output_path}")
+        else:  # multichannel
             cmd.append(output_path)
-            status_msg = (f"Recording MULTICHANNEL (all {total_channels} channels) on device :{device_index} stream {audio_stream_idx} -> {output_path}")
+            status_msg = (f"Recording MULTICHANNEL (all {total_channels} channels) on device :{device_index} "
+                          f"stream {audio_stream_idx} -> {output_path}")
 
         self.status_label.config(text=status_msg)
         # Launch ffmpeg; its logs will print to your Terminal.
