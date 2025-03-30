@@ -10,27 +10,30 @@ import logging
 import json
 from enum import Enum
 
-# Configure root-level logging: you can adjust filename, level, format, etc.
+# Configure root-level logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s")
 
 class LogSeverity(Enum):
+    """
+    Enumeration for log severity. Will affect terminal and UI log.
+    """
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
 
-def get_avfoundation_audio_devices():
+def get_avfoundation_audio_devices() -> list:
     """
     Runs `ffmpeg -f avfoundation -list_devices true -i ""` and parses stderr
     to find lines matching the 'AVFoundation audio devices:' section.
     Returns a list of tuples (index_str, device_name).
-    Example: [("0", "BlackHole 16ch"), ("1", "Audient EVO16")]
+    Example: [("0", "RME Babyface"), ("1", "Audient EVO16")]
     """
     cmd = ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""]
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         lines = proc.stderr.splitlines()
     except Exception as e:
-        logging.error(f"ffmpeg not found! {e}")
+        logging.error("ffmpeg not found! %d", e)
         return []
 
     audio_dev_section = False
@@ -62,9 +65,16 @@ def infer_channel_count(device_name: str) -> int:
     return 2  # fallback
 
 class SimpleRecorder(tk.Tk):
+    """
+    Main recorder class.
+
+    This class creates the GUI and handles the recording logic.
+    It uses FFmpeg to record audio from the selected device.
+    The GUI is built using tkinter and ttk.
+    """
     def __init__(self):
         super().__init__()
-        self.title("Simple Stereo Recorder")
+        self.title("Recorder")
 
         # Use the default theme
         style = ttk.Style(self)
@@ -96,7 +106,7 @@ class SimpleRecorder(tk.Tk):
 
         # Attempt to maximize the window (windowed fullscreen)
         self.update_idletasks()
-        self.state('zoomed')  # may have no effect on some OSes
+        self.state('zoomed')
 
         # Gather audio devices
         self.audio_devices = get_avfoundation_audio_devices()
@@ -143,11 +153,11 @@ class SimpleRecorder(tk.Tk):
         ttk.Radiobutton(stream_frame, text="1",
                         variable=self.stream_index_var, value=1).pack(side="left")
 
-        # Band Name
-        ttk.Label(main_frame, text="Band Name:").grid(
+        # File Name
+        ttk.Label(main_frame, text="File Name:").grid(
             row=3, column=0, padx=5, pady=5, sticky="e")
-        self.band_name_var = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.band_name_var, width=30).grid(
+        self.file_name_var = tk.StringVar()
+        ttk.Entry(main_frame, textvariable=self.file_name_var, width=30).grid(
             row=3, column=1, padx=5, pady=5, sticky="w")
 
         # Destination Folder
@@ -249,7 +259,7 @@ class SimpleRecorder(tk.Tk):
 
         if "device_index" in data:
             loaded_idx = data["device_index"]
-            for i, (dev_idx, dev_name) in enumerate(self.audio_devices):
+            for i, (dev_idx, _) in enumerate(self.audio_devices):
                 if dev_idx == loaded_idx:
                     self.device_combo.current(i)
                     break
@@ -257,8 +267,8 @@ class SimpleRecorder(tk.Tk):
         if "stream_index" in data:
             self.stream_index_var.set(data["stream_index"])
 
-        if "band_name" in data:
-            self.band_name_var.set(data["band_name"])
+        if "file_name" in data:
+            self.file_name_var.set(data["file_name"])
 
         if "destination_folder" in data:
             self.dest_path_var.set(data["destination_folder"])
@@ -273,15 +283,24 @@ class SimpleRecorder(tk.Tk):
             self.stereo_pair_var.set(data["stereo_pair"])
 
     def choose_folder(self):
+        """
+        Chooses a folder for the output file.
+        """
         folder = filedialog.askdirectory()
         if folder:
             self.dest_path_var.set(folder)
 
-    def on_device_changed(self, event=None):
+    def on_device_changed(self) -> None:
+        """
+        Handles device change events.
+        """
         self.update_channel_lists()
 
-    def update_channel_lists(self):
-        chosen_device_text = self.device_combo.get()  # e.g., "1: Audient EVO16"
+    def update_channel_lists(self) -> None:
+        """
+        Updates the channel list.
+        """
+        chosen_device_text = self.device_combo.get()
         if ":" in chosen_device_text:
             name_part = chosen_device_text.split(":", 1)[-1].strip()
         else:
@@ -314,6 +333,9 @@ class SimpleRecorder(tk.Tk):
             self.stereo_pair_var.set(stereo_vals[0])
 
     def on_mode_change(self):
+        """
+        Changes the recording mode.
+        """
         mode = self.record_mode_var.get()
         if mode == "mono":
             self.mono_channel_dropdown.config(state="readonly")
@@ -325,19 +347,22 @@ class SimpleRecorder(tk.Tk):
             self.mono_channel_dropdown.config(state="disabled")
             self.stereo_pair_dropdown.config(state="disabled")
 
-    def start_recording(self):
+    def start_recording(self) -> None:
+        """
+        Starts the recording
+        """
         if self.record_process and self.record_process.poll() is None:
             self.log_message("Already recording.", LogSeverity.WARNING)
             return
 
-        band_name = self.band_name_var.get().strip()
+        file_name = self.file_name_var.get().strip()
         now_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"{now_str}"
-        if band_name:
-            filename += f"_{band_name}"
-        filename += ".wav"
+        file_name_with_timestamp = f"{now_str}"
+        if file_name:
+            file_name_with_timestamp += f"_{file_name}"
+        file_name_with_timestamp += ".wav"
         destination_folder = self.dest_path_var.get().strip() or os.getcwd()
-        output_path = os.path.join(destination_folder, filename)
+        output_path = os.path.join(destination_folder, file_name_with_timestamp)
 
         chosen_device_text = self.device_combo.get()
         try:
@@ -400,7 +425,10 @@ class SimpleRecorder(tk.Tk):
 
         self.record_process = subprocess.Popen(cmd)
 
-    def stop_recording(self):
+    def stop_recording(self) -> None:
+        """
+        Stops the recording.
+        """
         if self.record_process and self.record_process.poll() is None:
             self.record_process.send_signal(signal.SIGINT)
             self.record_process.wait()
